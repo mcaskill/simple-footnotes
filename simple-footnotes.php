@@ -23,16 +23,16 @@ class nacin_footnotes {
             $this->footnotes[$id] = array( 0 => false );
         $this->footnotes[$id][] = $content;
         $note = count( $this->footnotes[$id] ) - 1;
-        return ' <a class="simple-footnote" title="' . esc_attr( wp_strip_all_tags( $content ) ) . '" id="return-note-' . $note . '" href="#note-' . $note . '"><sup>' . $note . '</sup></a>';
+        return ' <a class="simple-footnote" title="' . esc_attr( wp_strip_all_tags( $content ) ) . '" id="return-note-' $id . '-' . $note . '" href="#note-' $id . '-' . $note . '"><sup>' . $note . '</sup></a>';
     }
 
     function the_content( $content ) {
         global $id;
         if ( empty( $this->footnotes[$id] ) )
             return $content;
-        $content .= '<div id="simple-footnotes"><p class="notes">Notes:</p><ol>';
+        $content .= '<div class="simple-footnotes"><p class="notes">Notes:</p><ol>';
         foreach ( array_filter( $this->footnotes[$id] ) as $num => $note )
-            $content .= '<li id="note-' . $num . '">' . $note . ' <a href="#return-note-' . $num . '">&#8617;</a></li>';
+            $content .= '<li id="note-' . $id . '-' . $num . '">' . do_shortcode( $note ) . ' <a href="#return-note-' $id . '-' . $num . '">&#8617;</a></li>';
         $content .= '</ol></div>';
         return $content;
     }
