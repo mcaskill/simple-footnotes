@@ -2,8 +2,8 @@
 /*
  * Plugin Name: Simple Footnotes
  * Plugin URI: http://wordpress.org/extend/plugins/simple-footnotes/
- * Plugin Description: Create simple, elegant footnotes on your site. Use the <code>[ref]</code> shortcode ([ref]My note.[/ref]) and the plugin takes care of the rest.
- * Version: 0.3-beta
+ * Plugin Description: Create simple, elegant footnotes on your site. Use the <code>[ref]</code> shortcode ([ref]My note.[/ref]) and the plugin takes care of the rest. There's also a <a href="options-reading.php">setting</a> that enables you to move the footnotes below your page links, for those who paginate posts.
+ * Version: 0.3
  * Author: Andrew Nacin
  * Author URI: http://andrewnacin.com/
  */
