@@ -24,7 +24,11 @@ class nacin_footnotes {
 	var $db_version = 1;
 
 	function nacin_footnotes() {
-		$this->footnotes = $this->shortcodes_collected = array( 'posts' => array(), 'comments' => array() );
+		add_action( 'init', array( &$this, 'init' ) );
+	}
+
+	function init() {
+		$this->footnotes = $this->shortcodes_collected = array( 'post' => array(), 'comment' => array() );
 
 		add_shortcode( 'ref', array( &$this, 'shortcode' ) );
 
@@ -138,16 +142,16 @@ class nacin_footnotes {
 			$content .= '<p class="notes">Notes:</p><ol>';
 		foreach ( array_filter( $this->footnotes[ $type ][ $id ] ) as $num => $note )
 			$content .= '<li id="' . $anchor . $id . '-' . $num . '">' . do_shortcode( $note ) .
-				' <a href="#return-' $anchor . $id . '-' . $num . '">&#8617;</a></li>';
+				' <a href="#return-' . $anchor . $id . '-' . $num . '">&#8617;</a></li>';
 		$content .= '</ol></div>';
 		return $content;
 	}
 
-	function ( $text ) {
+	function do_shortcode_comments( $text ) {
 		global $shortcode_tags;
 		$orig_shortcode_tags = $shortcode_tags;
 		remove_all_shortcodes();
-		add_shortcode( 'ref', array( &$this, 'shortcode' ) );
+		add_shortcode( 'ref', array( &$this, 'footnotes' ) );
 		$content = do_shortcode( $content );
 		$shortcode_tags = $orig_shortcode_tags;
 		return $content;
