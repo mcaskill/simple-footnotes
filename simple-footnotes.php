@@ -13,6 +13,7 @@ class nacin_footnotes {
 	var $option_name = 'simple_footnotes';
 	var $db_version = 1;
 	var $placement = 'content';
+	var $shortcodes_collected = array();
 	function nacin_footnotes() {
 		add_shortcode( 'ref', array( &$this, 'shortcode' ) );
 
@@ -70,12 +71,15 @@ class nacin_footnotes {
 			return;
 		if ( ! isset( $this->footnotes[$id] ) )
 			$this->footnotes[$id] = array( 0 => false );
-		$this->footnotes[$id][] = $content;
+		// Only collect shortcodes once, in case the_content gets called multiple times.
+		if ( ! in_array( $id, $this->shortcodes_collected ) )
+			$this->footnotes[$id][] = $content;
 		$note = count( $this->footnotes[$id] ) - 1;
 		return ' <a class="simple-footnote" title="' . esc_attr( wp_strip_all_tags( $content ) ) . '" id="return-note-' . $id . '-' . $note . '" href="#note-' . $id . '-' . $note . '"><sup>' . $note . '</sup></a>';
 	}
 
 	function the_content( $content ) {
+		$this->shortcodes_collected[] = $GLOBALS['id'];
 		if ( 'content' == $this->placement || ! $GLOBALS['multipage'] )
 			return $this->footnotes( $content );
 		return $content;
