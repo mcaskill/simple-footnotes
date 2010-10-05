@@ -9,20 +9,38 @@
  */
 
 class nacin_footnotes {
+	// Stores footnotes once crawled.
 	var $footnotes = array();
-	var $option_name = 'simple_footnotes';
-	var $db_version = 1;
-	var $placement = 'content';
+
+	// Stores post and comment IDs that have already been crawled for footnotes.
 	var $shortcodes_collected = array();
+
+	// Holds option data.
+	var $option_name = 'simple_footnotes';
+	var $options = array();
+	var $placement = 'content';
+
+	// DB version, for schema upgrades.
+	var $db_version = 1;
+
 	function nacin_footnotes() {
+		$this->footnotes = $this->shortcodes_collected = array( 'posts' => array(), 'comments' => array() );
+
 		add_shortcode( 'ref', array( &$this, 'shortcode' ) );
 
+		// Fetch and set up options.
 		$this->options = get_option( 'simple_footnotes' );
-		if ( ! empty( $this->options ) )
+		if ( ! empty( $this->options ) && ! empty( $this->options['placement'] ) )
 			$this->placement = $this->options['placement'];
+
 		if ( 'page_links' == $this->placement )
 			add_filter( 'wp_link_pages_args', array( &$this, 'wp_link_pages_args' ) );
 		add_filter( 'the_content', array( &$this, 'the_content' ), 12 );
+
+		if ( is_user_logged_in() && current_user_can( 'edit_posts' ) ) {
+		    add_filter( 'comment_text', array( &$this, 'do_shortcode_comments' ), 11 );;
+			add_filter( 'comment_text', array( &$this, 'comment_text' ), 12 );
+		}
 
 		if ( ! is_admin() )
 			return;
@@ -66,16 +84,26 @@ class nacin_footnotes {
 	}
 
 	function shortcode( $atts, $content = null ) {
-		global $id;
 		if ( null === $content )
 			return;
-		if ( ! isset( $this->footnotes[$id] ) )
-			$this->footnotes[$id] = array( 0 => false );
+
+		if ( current_filter() == 'comment_text' ) {
+			$type = 'comment';
+			$id = $GLOBALS['comment']->comment_ID;
+		} else {
+			$type = 'post';
+			$id = $GLOBALS['id'];
+		}
+
+		if ( ! isset( $this->footnotes[ $type ][ $id ] ) )
+			$this->footnotes[ $type ][ $id ] = array( 0 => false );
 		// Only collect shortcodes once, in case the_content gets called multiple times.
-		if ( ! in_array( $id, $this->shortcodes_collected ) )
-			$this->footnotes[$id][] = $content;
-		$note = count( $this->footnotes[$id] ) - 1;
-		return ' <a class="simple-footnote" title="' . esc_attr( wp_strip_all_tags( $content ) ) . '" id="return-note-' . $id . '-' . $note . '" href="#note-' . $id . '-' . $note . '"><sup>' . $note . '</sup></a>';
+		if ( ! in_array( $id, $this->shortcodes_collected['post'] ) )
+			$this->footnotes[ $type ][ $id ][] = $content;
+		$note = count( $this->footnotes[ $type ][ $id ] ) - 1;
+		return ' <a class="simple-footnote" title="' . esc_attr( wp_strip_all_tags( $content ) ) . '" id="return' .
+			( 'comment' == $type ? '-comment' : '' ) . '-note-' . $id . '-' . $note . '" href="#note-' . $id . '-' .
+			$note . '"><sup>' . $note . '</sup></a>';
 	}
 
 	function the_content( $content ) {
@@ -94,13 +122,34 @@ class nacin_footnotes {
 	}
 
 	function footnotes( $content ) {
-		global $id;
-		if ( empty( $this->footnotes[$id] ) )
+		if ( current_filter() == 'comment_text' ) {
+			$type = 'comment';
+			$id = $GLOBALS['comment']->comment_ID;
+			$anchor = 'comment-note-';
+		} else {
+			$type = 'post';
+			$id = $GLOBALS['id'];
+			$anchor = 'note-';
+		}
+		if ( empty( $this->footnotes[ $type ][ $id ] ) )
 			return $content;
-		$content .= '<div class="simple-footnotes"><p class="notes">Notes:</p><ol>';
-		foreach ( array_filter( $this->footnotes[$id] ) as $num => $note )
-			$content .= '<li id="note-' . $id . '-' . $num . '">' . do_shortcode( $note ) . ' <a href="#return-note-' . $id . '-' . $num . '">&#8617;</a></li>';
+		$content .= '<div class="simple-footnotes">';
+		if ( 'post' == $type )
+			$content .= '<p class="notes">Notes:</p><ol>';
+		foreach ( array_filter( $this->footnotes[ $type ][ $id ] ) as $num => $note )
+			$content .= '<li id="' . $anchor . $id . '-' . $num . '">' . do_shortcode( $note ) .
+				' <a href="#return-' $anchor . $id . '-' . $num . '">&#8617;</a></li>';
 		$content .= '</ol></div>';
+		return $content;
+	}
+
+	function ( $text ) {
+		global $shortcode_tags;
+		$orig_shortcode_tags = $shortcode_tags;
+		remove_all_shortcodes();
+		add_shortcode( 'ref', array( &$this, 'shortcode' ) );
+		$content = do_shortcode( $content );
+		$shortcode_tags = $orig_shortcode_tags;
 		return $content;
 	}
 }
