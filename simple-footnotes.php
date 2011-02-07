@@ -3,12 +3,13 @@
  * Plugin Name: Simple Footnotes
  * Plugin URI: http://wordpress.org/extend/plugins/simple-footnotes/
  * Plugin Description: Create simple, elegant footnotes on your site. Use the <code>[ref]</code> shortcode ([ref]My note.[/ref]) and the plugin takes care of the rest. There's also a <a href="options-reading.php">setting</a> that enables you to move the footnotes below your page links, for those who paginate posts.
- * Version: 0.3
+ * Version: 0.4
  * Author: Andrew Nacin
  * Author URI: http://andrewnacin.com/
  */
 
 class nacin_footnotes {
+
 	// Stores footnotes once crawled.
 	var $footnotes = array();
 
@@ -30,6 +31,7 @@ class nacin_footnotes {
 	function init() {
 		$this->footnotes = $this->shortcodes_collected = array( 'post' => array(), 'comment' => array() );
 
+		//register shortcode
 		add_shortcode( 'ref', array( &$this, 'shortcode' ) );
 
 		// Fetch and set up options.
@@ -37,13 +39,14 @@ class nacin_footnotes {
 		if ( ! empty( $this->options ) && ! empty( $this->options['placement'] ) )
 			$this->placement = $this->options['placement'];
 
-		if ( 'page_links' == $this->placement )
+		if ( 'page_links' == $this->placement && !is_feed() )
 			add_filter( 'wp_link_pages_args', array( &$this, 'wp_link_pages_args' ) );
-		add_filter( 'the_content', array( &$this, 'the_content' ), 12 );
+		else
+			add_filter( 'the_content', array( &$this, 'the_content' ), 12 );
 
 		if ( is_user_logged_in() && current_user_can( 'edit_posts' ) ) {
 		    add_filter( 'comment_text', array( &$this, 'do_shortcode_comments' ), 11 );;
-			add_filter( 'comment_text', array( &$this, 'comment_text' ), 12 );
+			//????? add_filter( 'comment_text', array( &$this, 'comment_text' ), 12 );
 		}
 
 		if ( ! is_admin() )
@@ -156,5 +159,6 @@ class nacin_footnotes {
 		$shortcode_tags = $orig_shortcode_tags;
 		return $content;
 	}
+	
 }
 new nacin_footnotes();
