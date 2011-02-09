@@ -13,9 +13,6 @@ class nacin_footnotes {
 	// Stores footnotes once crawled.
 	var $footnotes = array();
 
-	// Stores post and comment IDs that have already been crawled for footnotes.
-	var $shortcodes_collected = array();
-
 	// Holds option data.
 	var $option_name = 'simple_footnotes';
 	var $options = array();
@@ -33,6 +30,9 @@ class nacin_footnotes {
 
 		//register shortcode
 		add_shortcode( 'ref', array( &$this, 'shortcode' ) );
+		
+		//add high-priority hook to clear footnotes array
+		add_filter( 'the_content', array( &$this, 'clear_footnotes' ), 1 );
 
 		// Fetch and set up options.
 		$this->options = get_option( 'simple_footnotes' );
@@ -104,9 +104,9 @@ class nacin_footnotes {
 
 		if ( ! isset( $this->footnotes[ $type ][ $id ] ) )
 			$this->footnotes[ $type ][ $id ] = array( 0 => false );
-		// Only collect shortcodes once, in case the_content gets called multiple times.
-		if ( ! in_array( $id, $this->shortcodes_collected['post'] ) )
-			$this->footnotes[ $type ][ $id ][] = $content;
+			
+		$this->footnotes[ $type ][ $id ][] = $content;
+		
 		$note = count( $this->footnotes[ $type ][ $id ] ) - 1;
 		return ' <a class="simple-footnote" title="' . esc_attr( wp_strip_all_tags( $content ) ) . '" id="return' .
 			( 'comment' == $type ? '-comment' : '' ) . '-note-' . $id . '-' . $note . '" href="#note-' . $id . '-' .
@@ -114,9 +114,16 @@ class nacin_footnotes {
 	}
 
 	function the_content( $content ) {
-		$this->shortcodes_collected[] = $GLOBALS['id'];
+
 		if ( 'content' == $this->placement || ! $GLOBALS['multipage'] )
 			return $this->footnotes( $content );
+			
+		return $content;
+	}
+	
+	function clear_footnotes($content) {
+		//clear collected footnotes incase the_content is called more than once
+		$this->footnotes = array();
 		return $content;
 	}
 
@@ -150,7 +157,7 @@ class nacin_footnotes {
 		return $content;
 	}
 
-	function do_shortcode_comments( $text ) {
+	function do_shortcode_comments( $content ) {
 		global $shortcode_tags;
 		$orig_shortcode_tags = $shortcode_tags;
 		remove_all_shortcodes();
