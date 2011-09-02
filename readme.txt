@@ -2,7 +2,7 @@
 Contributors: nacin
 Tags: footnotes, endnotes, shortcode, references
 Requires at least: 2.5
-Tested up to: 3.1-alpha
+Tested up to: 3.3
 Stable tag: 0.3
 
 Create simple, elegant footnotes on your site. Use the [ref] shortcode and the plugin takes care of the rest.
@@ -17,6 +17,9 @@ If you paginate your posts, you can optionally move your footnotes below your pa
 
 == Changelog ==
 
+= 0.4 = 
+* If you paginate your posts, footnote numbering will now remain consistent across pages (e.g., each page does not start with 1)
+
 = 0.3 =
 * If you paginate your posts, there's now an option under Settings > Reading that enables you to move the footnotes below your page links. Footnotes will still appear as normal for posts that are unpaginated.
 
@@ -24,6 +27,9 @@ If you paginate your posts, you can optionally move your footnotes below your pa
 * Release.
 
 == Upgrade Notice ==
+
+= 0.4 =
+If you paginate your posts, this version will allow footnote numbering to remain consistent across pages (e.g., each page does not start with 1)
 
 = 0.3 =
  If you paginate your posts, this version enables you to move the footnotes below your page links. Footnotes would still appear as normal for posts that are unpaginated.
