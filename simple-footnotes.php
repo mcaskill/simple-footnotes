@@ -6,6 +6,7 @@
  * Version: 0.4
  * Author: Andrew Nacin
  * Author URI: http://andrewnacin.com/
+ * Text Domain: simple-footnotes
  */
 
 class nacin_footnotes {
@@ -93,9 +94,11 @@ class nacin_footnotes {
 			update_option( $this->option_name, $this->options );
 			
 		}
-		
+
+		load_plugin_textdomain( 'simple-footnotes' );
+
 		//add options fields
-		add_settings_field( 'simple_footnotes_placement', 'Footnotes placement', array( &$this, 'settings_field_cb' ), 'reading' );
+		add_settings_field( 'simple_footnotes_placement', __( 'Footnotes placement', 'simple-footnotes' ), array( &$this, 'settings_field_cb' ), 'reading' );
 		register_setting( 'reading', 'simple_footnotes', array( &$this, 'register_setting_cb' ) );
 	
 	}
@@ -125,8 +128,8 @@ class nacin_footnotes {
 	
 		//options for where the footnotes can be
 		$fields = array(
-			'content' => 'Below content',
-			'page_links' => 'Below page links',
+			'content'    => __( 'Below content',    'simple-footnotes' ),
+			'page_links' => __( 'Below page links', 'simple-footnotes' ),
 		);
 		
 		//loop through each option and output
@@ -251,8 +254,10 @@ class nacin_footnotes {
 		//append footnotes to content and format
 		$content .= '<div class="simple-footnotes">';
 		
-		if ( 'post' == $type )
-			$content .= '<p class="notes">Notes:</p><ol start="'. ($start + 1) .'">';
+		if ( 'post' == $type ) {
+			load_plugin_textdomain( 'simple-footnotes' );
+			$content .= '<p class="notes">' . __( 'Notes:', 'simple-footnotes' ) . '</p><ol start="'. ( $start + 1 ) .'">';
+		}
 			
 		//loop through footnotes and format output
 		foreach ( array_filter( $this->footnotes[ $type ][ $id ] ) as $num => $note ) {
