@@ -1,0 +1,21 @@
+{
+    "name": "mcaskill/wp-simple-footnotes",
+    "description": "A simple way to add footnotes using WordPress shortcodes.",
+    "type": "wordpress-plugin",
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "Chauncey McAskill",
+            "email": "chauncey@mcaskill.ca",
+            "homepage": "https://mcaskill.ca"
+        },
+        {
+            "name": "Andrew Nacin",
+            "homepage": "https://github.com/nacin"
+        }
+    ],
+    "minimum-stability": "dev",
+    "require": {
+        "php": ">=5.6.0"
+    }
+}
