@@ -14,8 +14,24 @@
             "homepage": "https://github.com/nacin"
         }
     ],
+    "support": {
+        "issues": "https://github.com/mcaskill/wp-simple-footnotes/issues"
+    },
     "minimum-stability": "dev",
     "require": {
         "php": ">=5.6.0"
+    },
+    "require-dev": {
+        "automattic/phpcs-neutron-ruleset": "^3.2",
+        "dealerdirect/phpcodesniffer-composer-installer": "^0.6.2",
+        "squizlabs/php_codesniffer": "^3.5"
+    },
+    "extra": {
+        "branch-alias": {
+            "dev-master": "1.x-dev"
+        }
+    },
+    "config": {
+        "sort-packages": true
     }
 }
