@@ -45,12 +45,14 @@ class Footnotes
     /**
      * The plugin's database version number, for schema upgrades.
      *
-     * @var integer
+     * @var int
      */
     protected $db_version = 1;
 
     /**
      * Bootstrap the plugin.
+     *
+     * @return void
      */
     public function boot()
     {
@@ -59,23 +61,24 @@ class Footnotes
     }
 
     /**
-     * @type action:init
+     * @listens WP#action:init
+     *
+     * @return void
      */
     public function init()
     {
         $this->add_shortcode();
 
-        /** Add high-priority hook to clear footnotes array */
-        $this->add_hook( 'the_content', [ $this, 'clear' ], 1 );
+        // Add high-priority hook to clear footnotes array
+        $this->add_action_on_filter( 'the_content', [ $this, 'clear' ], 1 );
 
         // Fetch and set up options.
         $this->load_settings();
 
         // Tell WP to use our filters in the proper place
-        if ( 'page_links' === $this->placement && !is_feed() ) {
+        if ( 'page_links' === $this->placement && ! is_feed() ) {
             add_filter( 'wp_link_pages_args', [ $this, 'wp_link_pages_args' ] );
         } else {
-            // AFTER do_shortcode()
             add_filter( 'the_content', [ $this, 'append_to_post_content' ], 12 );
         }
 
@@ -90,8 +93,9 @@ class Footnotes
     }
 
     /**
-     * @type    action:admin_init
-     * @returns void
+     * @listens WP#action:admin_init
+     *
+     * @return void
      */
     public function admin_init()
     {
@@ -107,14 +111,14 @@ class Footnotes
         );
         register_setting( 'reading', $this->option_name, [
             'sanitize_callback' => [ $this, 'sanitize_settings' ],
-            'default'           => $this->get_default_settings()
+            'default'           => $this->get_default_settings(),
         ] );
     }
 
     /**
      * Upgrade the database settings.
      *
-     * @returns void
+     * @return void
      */
     protected function upgrade()
     {
@@ -145,11 +149,11 @@ class Footnotes
     /**
      * Load the current settings.
      *
-     * @returns void
+     * @return void
      */
     protected function load_settings()
     {
-        $this->options = get_option($this->option_name);
+        $this->options = get_option( $this->option_name );
         if ( ! empty( $this->options ) && ! empty( $this->options['placement'] ) ) {
             $this->placement = $this->options['placement'];
         }
@@ -158,42 +162,44 @@ class Footnotes
     /**
      * Get the default settings.
      *
-     * @type    filter:default_option_{simple_footnotes}
-     * @used-by filter_default_option()
-     * @returns array
+     * @listens WP#filter:default_option_{$option}
+     *
+     * @return array
      */
     public function get_default_settings()
     {
         return [
             'db_version' => $this->db_version,
-            'placement' => 'content'
+            'placement'  => 'content',
         ];
     }
 
     /**
      * Sanitize settings before saving.
      *
-     * @type    filter:sanitize_option_{simple_footnotes}
-     * @param   mixed $value The settings to process.
-     * @returns array The processed settings.
+     * @listens WP#filter:sanitize_option_{$option}
+     *
+     * @param  mixed $prefs The user options to process.
+     * @return array The processed settings.
      */
-    public function sanitize_settings( $value )
+    public function sanitize_settings( $prefs )
     {
-        $output = $this->get_default_settings();
+        $settings = $this->get_default_settings();
 
-        if ( ! empty( $value['placement'] ) && 'page_links' === $value['placement'] ) {
-            $output['placement'] = 'page_links';
+        if ( ! empty( $prefs['placement'] ) && 'page_links' === $prefs['placement'] ) {
+            $settings['placement'] = $prefs['placement'];
         }
 
-        return $output;
+        return $settings;
     }
 
     /**
      * Render the settings field.
      *
-     * @used-by do_settings_fields()
-     * @type    setting:simple_footnotes
-     * @param   array $args Field output arguments.
+     * @listens WP#callback:do_settings_fields()
+     *
+     * @param  array $args Field output arguments.
+     * @return void
      */
     public function display_settings_field( array $args = [] )
     {
@@ -202,19 +208,25 @@ class Footnotes
             'page_links' => __( 'Below page links', 'simple-footnotes' ),
         ];
 
+        echo '<fieldset><p>';
+
         $html = '<label><input type="radio" name="{name}" value="{value}"{checked}> {label}</label><br/>';
         foreach ( $fields as $field => $label ) {
-            echo strtr($html, [
+            echo strtr( $html, [
                 '{name}'    => $this->option_name . '[placement]',
                 '{value}'   => $field,
                 '{label}'   => $label,
                 '{checked}' => checked( $this->placement, $field, false ),
-            ]);
+            ] );
         }
+
+        echo '</p></fieldset>';
     }
 
     /**
      * Add the `[ref]` shortcode.
+     *
+     * @return void
      */
     public function add_shortcode()
     {
@@ -227,7 +239,9 @@ class Footnotes
      * This function removes all existing shortcodes, registers the `[ref]` shortcode,
      * calls {@see do_shortcode()}, and then re-registers the old shortcodes.
      *
-     * @global array $shortcode_tags
+     * @listens WP#filter:comment_text
+     *
+     * @global array $shortcode_tags List of shortcode tags and their callback hooks.
      *
      * @param  string $content Content to parse.
      * @return string Content with shortcode parsed.
@@ -254,23 +268,30 @@ class Footnotes
     /**
      * Process the `[ref]` shortcode.
      *
-     * @type  shortcode:ref
-     * @param array  $atts Shortcode attributes.
-     * @param string $note The content within the shortcode tags.
+     * @listens WP#callback:do_shortcode()
+     *
+     * @global \WP_Comment $comment Global comment object.
+     * @global \WP_Post    $post    Global post object.
+     *
+     * @fires WP#filter:footnote_number
+     * @fires WP#filter:footnote_reference_html
+     *
+     * @param  array       $atts Shortcode attributes.
+     * @param  string|null $note The content within the shortcode tags.
+     * @return ?string
      */
     public function shortcode( $atts, $note = null )
     {
-        global $comment;
-        global $post;
+        global $comment, $post;
 
-        if ( null === $note ) {
-            return;
+        if ( null === $note || '' === $note ) {
+            return null;
         }
 
         $is_comment = ( current_filter() === 'comment_text' );
         if ( $is_comment ) {
             if ( null === $comment ) {
-                return;
+                return null;
             }
 
             $type   = 'comment';
@@ -278,7 +299,7 @@ class Footnotes
             $anchor = 'comment-note-';
         } else {
             if ( null === $post ) {
-                return;
+                return null;
             }
 
             $type   = 'post';
@@ -297,12 +318,13 @@ class Footnotes
         /**
          * Calculates the footnote #
          *
-         * @type   filter:footnote_number
-         * @param  integer $mark    The reference number or mark. Defaults to the next sequential number.
-         * @param  integer $id      The post or comment ID.
+         * @event filter:footnote_number
+         *
+         * @param  int     $mark    The reference number or mark. Defaults to the next sequential number.
+         * @param  int     $id      The post or comment ID.
          * @param  string  $note    The footnote.
          * @param  string  $type    The current object type.
-         * @return integer|string A number or mark.
+         * @return int    |string A number or mark.
          */
         $mark = apply_filters(
             'footnote_number',
@@ -315,7 +337,8 @@ class Footnotes
         /**
          * Filters the HTML anchor tag of a footnote.
          *
-         * @type   filter:footnote_reference_html
+         * @event filter:footnote_reference_html
+         *
          * @param  string $html The HTML anchor tag of a footnote.
          * @return string The filtered HTML link to a footnote.
          */
@@ -326,18 +349,19 @@ class Footnotes
 
         $key = $anchor . $id . '-' . $mark;
 
-        return strtr($html, [
+        return strtr( $html, [
             '{title}' => esc_attr( wp_strip_all_tags( $note ) ),
             '{id}'    => esc_attr( 'return-' . $key ),
             '{href}'  => esc_attr( '#' . $key ),
             '{mark}'  => $mark,
-        ]);
+        ] );
     }
 
     /**
      * Append the footnotes to the comment text.
      *
-     * @type   filter:comment_text
+     * @listens WP#filter:comment_text
+     *
      * @param  string $content Content of the current comment.
      * @return string The processed comment.
      */
@@ -349,7 +373,10 @@ class Footnotes
     /**
      * Append the footnotes to the post content.
      *
-     * @type   filter:the_content
+     * @listens WP#filter:the_content
+     *
+     * @global int $multipage Boolean indicator for whether multiple pages are in play.
+     *
      * @param  string $content Content of the current post.
      * @return string The processed content.
      */
@@ -371,13 +398,15 @@ class Footnotes
      * `$this->footnotes[$id]` will be empty the first time through,
      * so it works, simple as that.
      *
-     * @type   filter:wp_link_pages_args
+     * @listens WP#filter:wp_link_pages_args
+     *
      * @param  array $args Arguments for page links for paginated posts.
      * @return array The filtered arguments.
      */
     public function wp_link_pages_args( $args )
     {
         $args['after'] = $this->append( $args['after'] );
+
         return $args;
     }
 
@@ -394,15 +423,17 @@ class Footnotes
     /**
      * Append the footnotes.
      *
+     * @global \WP_Comment $comment  Global comment object.
+     * @global int         $numpages Number of pages in the current post.
+     * @global string      $pagenow  Current Admin page
+     * @global \WP_Post    $post     Global post object.
+     *
      * @param  string $content The content to process.
      * @return string The content with footnotes.
      */
     public function append( $content )
     {
-        global $comment;
-        global $numpages;
-        global $pagenow;
-        global $post;
+        global $comment, $numpages, $pagenow, $post;
 
         $is_comment = ( current_filter() === 'comment_text' );
         if ( $is_comment ) {
@@ -449,12 +480,12 @@ class Footnotes
         foreach ( array_filter( $this->footnotes[$type][$id] ) as $num => $note ) {
             $mark = apply_filters( 'footnote_number', $num, $id, $note, $type );
             $key  = $anchor . $id . '-' . $mark;
-            $note = strtr($html, [
+            $note = strtr( $html, [
                 '{id}'   => esc_attr( $key ),
                 '{href}' => esc_attr( '#return-' . $key ),
                 '{ref}'  => '&#8617;',
                 '{note}' => do_shortcode( $note ),
-            ]);
+            ] );
 
             $content .= $note;
         }
@@ -469,29 +500,33 @@ class Footnotes
      *
      * @param  string $content  The haystack of `[ref]` tags.
      * @param  string $footnote The searched footnote.
-     * @return integer The zero-based indexed for $footnote.
+     * @return int The zero-based indexed for $footnote.
      */
     public function get_footnote_absolute_index( $content, $footnote )
     {
-        preg_match_all('/(.?)\[(ref)\b(.*?)(?:(\/))?\](?:(.+?)\[\/\2\])?(.?)/s', $content, $matches );
+        $pattern = '/(.?)\[(ref)\b(.*?)(?:(\/))?\](?:(.+?)\[\/\2\])?(.?)/s';
+        preg_match_all( $pattern, $content, $matches );
         return array_search( $footnote, $matches[5] );
     }
 
     /**
      * If post is paginated adjusts the footnote numbering to remain consistent across pages.
      *
-     * @type   filter:footnote_number
-     * @param  integer $mark    The original footnote number.
-     * @param  integer $id      The post ID.
+     * @listens filter:footnote_number
+     *
+     * @global int      $numpages Number of pages in the current post.
+     * @global string   $pagenow  Current Admin page
+     * @global \WP_Post $post     Global post object.
+     *
+     * @param  int     $mark    The original footnote number.
+     * @param  int     $id      The post ID.
      * @param  string  $note    The footnote.
      * @param  string  $type    The current object type.
-     * @return integer The adjusted number.
+     * @return int The adjusted number.
      */
     public function maybe_paginate_footnotes( $number, $id, $note, $type )
     {
-        global $numpages;
-        global $pagenow;
-        global $post;
+        global $numpages, $pagenow, $post;
 
         // Don't worry about pagination for comments.
         if ( 'comment' === $type ) {
@@ -514,28 +549,24 @@ class Footnotes
     }
 
     /**
-     * Attach a callback routine to a specific filter or action.
+     * Hooks a function or method to a specific filter event as if it was an action event.
      *
-     * Useful for attaching and invoking actions on filters.
+     * The filtered value is unaffected by the callback.
      *
-     * @param  string   $tag      The name of the event to hook the $function_to_add callback to.
-     * @param  callable $callback The callback to be run when the event is called.
-     * @param  integer  $priority The order in which the functions associated with a
-     *                            particular event are executed.
-     * @return self
+     * @param  string    $tag             The name of the action to hook the $function_to_add callback to.
+     * @param  callable  $function_to_add The callback to be run when the action is applied.
+     * @param  int|float $priority        Optional. Used to specify the order in which the functions
+     *                                    associated with a particular action are executed. Default 10.
+     * @param  int       $accepted_args   Optional. The number of arguments the function accepts. Default 1.
+     * @return bool Returns FALSE if the $function_to_add is not callable, otherwise returns TRUE.
      */
-    protected function add_hook( $tag, $callback, $priority = 10 )
+    protected function add_action_on_filter( $tag, $function_to_add, $priority = 10, $accepted_args = 1 )
     {
-        $proxy = function ( ...$args ) use ( $callback ) {
-            call_user_func($callback);
-
-            if (count($args) > 0) {
-                return reset($args);
-            }
+        $proxy_function = function ( $value ) use ( $function_to_add ) {
+            call_user_func_array( $function_to_add, func_get_args() );
+            return $value;
         };
 
-        add_filter($tag, $proxy, $priority);
-
-        return $this;
+        return add_filter( $tag, $proxy_function, $priority, $accepted_args );
     }
 }

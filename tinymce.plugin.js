@@ -6,30 +6,35 @@
  *
  * @package mcaskill/wp-simple-footnotes
  */
-(function($, tinyMCE) {
+( function ( tinymce ) {
 
-	tinyMCE.PluginManager.add('simple_footnotes', function( editor, url ) {
-		editor.addButton('simple_footnote', {
-			title   : editor.getLang('simple-footnote.title'),
-			icon    : 'anchor',
-			onclick : function() {
-				editor.windowManager.open({
-					width  : 480,
-					height : 100,
-					title  : editor.getLang('simple-footnote.title'),
-					body: [
-						{
-							type: 'textbox',
-							name: 'note',
-							multiline: true
-						}
-					],
-					onsubmit: function(e) {
-						editor.insertContent('[ref]' + $.trim( e.data.note ) + '[/ref]');
-					}
-				});
-			}
-		});
-	});
+    tinymce.PluginManager.add( 'simple_footnotes', function ( editor, url ) {
+        editor.addButton( 'simple_footnote', {
+            title:   editor.getLang( 'simple-footnote.title' ),
+            icon:    'anchor',
+            onclick: function () {
+                editor.windowManager.open( {
+                    width:  480,
+                    height: 100,
+                    title:  editor.getLang( 'simple-footnote.title' ),
+                    body:   [
+                        {
+                            type:      'textbox',
+                            name:      'note',
+                            multiline: true
+                        }
+                    ],
+                    onsubmit: function ( event ) {
+                        if ( event.data.note && ( typeof event.data.note === 'string' ) ) {
+                            event.data.note = event.data.note.trim();
+                        }
 
-})(jQuery, tinyMCE);
+                        if ( event.data.note ) {
+                            editor.insertContent( '[ref]' + event.data.note + '[/ref]' );
+                        }
+                    }
+                } );
+            }
+        } );
+    } );
+} )( window.tinymce );
