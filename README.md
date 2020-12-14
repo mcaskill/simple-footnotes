@@ -5,7 +5,7 @@
 - License: MIT
 - Requires at least: 2.5
 - Tested up to: 4.5
-- Stable tag: 1.0
+- Stable tag: 1.0.0
 
 A simple way to add footnotes using WordPress shortcodes.
 
@@ -180,29 +180,29 @@ There are several predefined groups that style the appearance of footnote marker
 
 ## Changelog
 
-### 1.0
+### 1.0.0
 
 * Updated for The Modern Age.
 
-### 0.4
+### 0.4.0
 
 * If you paginate your posts, footnote numbering will now remain consistent across pages (e.g., each page does not start with 1)
 
-### 0.3
+### 0.3.0
 
 * If you paginate your posts, there's now an option under Settings > Reading that enables you to move the footnotes below your page links. Footnotes will still appear as normal for posts that are unpaginated.
 
-### 0.2
+### 0.2.0
 
 * Release.
 
 ## Upgrade Notice
 
-### 0.4
+### 0.4.0
 
 If you paginate your posts, this version will allow footnote numbering to remain consistent across pages (e.g., each page does not start with 1)
 
-### 0.3
+### 0.3.0
 
  If you paginate your posts, this version enables you to move the footnotes below your page links. Footnotes would still appear as normal for posts that are unpaginated.
 
