@@ -4,7 +4,7 @@
 - Tags: footnotes, endnotes, shortcode, references
 - License: MIT
 - Requires at least: 2.5
-- Tested up to: 4.5
+- Tested up to: 5.6
 - Stable tag: 1.0.0
 
 A simple way to add footnotes using WordPress shortcodes.
