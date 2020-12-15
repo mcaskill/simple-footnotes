@@ -5,7 +5,7 @@ namespace McAskill\WordPress\Footnotes;
 /**
  * Simple Footnotes for WordPress
  */
-class Footnotes
+class Footnotes implements \Countable, \IteratorAggregate
 {
     /**
      * Store the footnotes.
@@ -33,7 +33,7 @@ class Footnotes
      *
      * @var string
      */
-    protected $placement = 'content';
+    protected $placement = 'the_content';
 
     /**
      * The plugin's option name.
@@ -47,10 +47,10 @@ class Footnotes
      *
      * @var int
      */
-    protected $db_version = 1;
+    protected $db_version = 2;
 
     /**
-     * Bootstrap the plugin.
+     * Bootstraps the plugin.
      *
      * @return void
      */
@@ -61,38 +61,42 @@ class Footnotes
     }
 
     /**
+     * Initializes the plugin's global functionality.
+     *
      * @listens WP#action:init
      *
      * @return void
      */
     public function init()
     {
-        $this->add_shortcode();
-
-        // Add high-priority hook to clear footnotes array
-        $this->add_action_on_filter( 'the_content', [ $this, 'clear' ], 1 );
-
-        // Fetch and set up options.
         $this->load_settings();
 
-        // Tell WP to use our filters in the proper place
-        if ( 'page_links' === $this->placement && ! is_feed() ) {
-            add_filter( 'wp_link_pages_args', [ $this, 'wp_link_pages_args' ] );
-        } else {
-            add_filter( 'the_content', [ $this, 'append_to_post_content' ], 12 );
+        $this->add_shortcodes();
+
+        switch ( $this->placement ) {
+            case 'page_links':
+                add_filter( 'footnote_reference_index', [ $this, 'maybe_paginate_footnotes' ], 10, 4 );
+                add_filter( 'wp_link_pages_args', [ $this, 'append_to_link_pages_args' ], 12 );
+                $this->add_action_on_filter( 'wp_link_pages_args', [ $this, 'clear' ], 13 );
+                break;
+
+            case 'the_content':
+                add_filter( 'footnote_reference_index', [ $this, 'maybe_paginate_footnotes' ], 10, 4 );
+                add_filter( 'the_content', [ $this, 'append_to_post_content' ], 12 );
+                $this->add_action_on_filter( 'the_content', [ $this, 'clear' ], 13 );
+                break;
         }
 
         // Allow logged in users to add footnotes to comments
         if ( is_user_logged_in() && current_user_can( 'edit_posts' ) ) {
-            add_filter( 'comment_text', [ $this, 'run_shortcode' ], 31 );
+            add_filter( 'comment_text', [ $this, 'do_shortcode' ], 31 );
             add_filter( 'comment_text', [ $this, 'append_to_comment_text' ], 32 );
         }
-
-        // Footnote pagination
-        add_filter( 'footnote_number', [ $this, 'maybe_paginate_footnotes' ], 10, 4 );
     }
 
     /**
+     * Initializes the plugin's admin functionality.
+     *
      * @listens WP#action:admin_init
      *
      * @return void
@@ -113,54 +117,17 @@ class Footnotes
             'sanitize_callback' => [ $this, 'sanitize_settings' ],
             'default'           => $this->get_default_settings(),
         ] );
-    }
 
-    /**
-     * Upgrade the database settings.
-     *
-     * @return void
-     */
-    protected function upgrade()
-    {
-        // Check if DB needs to be upgraded
-        if (
-            false === $this->options ||
-            ! isset( $this->options['db_version'] ) ||
-            $this->options['db_version'] < $this->db_version
-        ) {
-            // Initialize options array
-            if ( ! is_array( $this->options ) ) {
-                $this->options = [];
-            }
-
-            // Establish the DB version
-            $current_db_version = isset( $this->options['db_version'] ) ? $this->options['db_version'] : 0;
-
-            // Run upgrade and store new version #
-            if ( $current_db_version < 1 ) {
-                $this->options['placement'] = 'content';
-            }
-
-            $this->options['db_version'] = $this->db_version;
-            update_option( $this->option_name, $this->options );
+        if ( current_user_can( 'edit_posts' ) && 'true' === get_user_option( 'rich_editing' ) ) {
+            add_filter( 'teeny_mce_buttons', [ $this, 'mce_buttons' ] );
+            add_filter( 'mce_buttons', [ $this, 'mce_buttons' ] );
+            add_filter( 'mce_external_plugins', [ $this, 'mce_external_plugins' ] );
+            add_filter( 'mce_external_languages', [ $this, 'mce_external_languages' ] );
         }
     }
 
     /**
-     * Load the current settings.
-     *
-     * @return void
-     */
-    protected function load_settings()
-    {
-        $this->options = get_option( $this->option_name );
-        if ( ! empty( $this->options ) && ! empty( $this->options['placement'] ) ) {
-            $this->placement = $this->options['placement'];
-        }
-    }
-
-    /**
-     * Get the default settings.
+     * Retrieves the default settings.
      *
      * @listens WP#filter:default_option_{$option}
      *
@@ -170,31 +137,71 @@ class Footnotes
     {
         return [
             'db_version' => $this->db_version,
-            'placement'  => 'content',
+            'placement'  => 'the_content',
         ];
     }
 
     /**
-     * Sanitize settings before saving.
+     * Parses the given placement.
+     *
+     * @param  mixed $placement The placement to parse.
+     * @return ?string
+     */
+    public function parse_placement( $placement )
+    {
+        if ( in_array( $placement, $this->get_valid_placements() ) ) {
+            if ( 'page_links' === $placement && is_feed() ) {
+                return 'the_content';
+            }
+
+            return $placement;
+        }
+
+        return null;
+    }
+
+    /**
+     * Retrieves the available placement locations.
+     *
+     * The "custom" placement indicates that the reflist
+     * must be explicitely invoked either from the `[reflist]`
+     * shortcode or programmatically in the template file.
+     *
+     * @return array The placement options.
+     */
+    public function get_valid_placements()
+    {
+        return [
+            'the_content',
+            'page_links',
+            'custom',
+        ];
+    }
+
+    /**
+     * Sanitizes the settings before saving.
      *
      * @listens WP#filter:sanitize_option_{$option}
      *
-     * @param  mixed $prefs The user options to process.
+     * @param  mixed $input The user options to process.
      * @return array The processed settings.
      */
-    public function sanitize_settings( $prefs )
+    public function sanitize_settings( $input )
     {
         $settings = $this->get_default_settings();
 
-        if ( ! empty( $prefs['placement'] ) && 'page_links' === $prefs['placement'] ) {
-            $settings['placement'] = $prefs['placement'];
+        $input = wp_parse_args( $input, $settings );
+        $input['placement'] = $this->parse_placement( $input['placement'] );
+
+        if ( ! empty( $input['placement'] ) ) {
+            $settings['placement'] = $input['placement'];
         }
 
         return $settings;
     }
 
     /**
-     * Render the settings field.
+     * Renders the settings field.
      *
      * @listens WP#callback:do_settings_fields()
      *
@@ -204,8 +211,9 @@ class Footnotes
     public function display_settings_field( array $args = [] )
     {
         $fields = [
-            'content'    => __( 'Below content',    'simple-footnotes' ),
-            'page_links' => __( 'Below page links', 'simple-footnotes' ),
+            'the_content' => __( 'Below content',    'simple-footnotes' ),
+            'page_links'  => __( 'Below page links', 'simple-footnotes' ),
+            'custom'      => __( 'Custom', 'simple-footnotes' ),
         ];
 
         echo '<fieldset><p>';
@@ -224,17 +232,68 @@ class Footnotes
     }
 
     /**
-     * Add the `[ref]` shortcode.
+     * Adds the footnotes button to the first-row list of TinyMCE buttons.
      *
-     * @return void
+     * @listens WP#filter:mce_buttons
+     *
+     * @param  array $buttons First-row list of buttons.
+     * @return array
      */
-    public function add_shortcode()
+    public function mce_buttons( $buttons )
     {
-        add_shortcode( 'ref', [ $this, 'shortcode' ] );
+        $key = array_search( 'blockquote', $buttons );
+
+        if ( false !== $key ) {
+            array_splice( $buttons, ( $key + 1 ), 0, [ $this->option_name ] );
+        } else {
+            array_push( $buttons, $this->option_name );
+        }
+
+        return $buttons;
     }
 
     /**
-     * Process the `[ref]` shortcode.
+     * Registers the footnotes plugin to the list of TinyMCE external plugins.
+     *
+     * @listens WP#filter:mce_external_plugins
+     *
+     * @param  array $plugins An array of external TinyMCE plugins.
+     * @return array
+     */
+    public function mce_external_plugins( $plugins )
+    {
+        $plugins[$this->option_name] = plugins_url( '/resources/tinymce/plugin.js', __DIR__ );
+
+        return $plugins;
+    }
+
+    /**
+     * Registers the footnotes plugin to the list of TinyMCE plugin localizations.
+     *
+     * @listens WP#filter:mce_external_languages
+     *
+     * @param  array $translations Translations for external TinyMCE plugins.
+     * @return array
+     */
+    public function mce_external_languages( $translations )
+    {
+        $translations[$this->option_name] = plugin_dir_path( __DIR__ ) . 'resources/tinymce/translations.php';
+
+        return $translations;
+    }
+
+    /**
+     * Registers the shortcodes.
+     *
+     * @return void
+     */
+    public function add_shortcodes()
+    {
+        add_shortcode( 'ref', [ $this, 'render_ref_shortcode' ] );
+    }
+
+    /**
+     * Processes any `[ref]` shortcodes.
      *
      * This function removes all existing shortcodes, registers the `[ref]` shortcode,
      * calls {@see do_shortcode()}, and then re-registers the old shortcodes.
@@ -246,7 +305,7 @@ class Footnotes
      * @param  string $content Content to parse.
      * @return string Content with shortcode parsed.
      */
-    public function run_shortcode( $content )
+    public function do_shortcode( $content )
     {
         global $shortcode_tags;
 
@@ -254,7 +313,7 @@ class Footnotes
         $orig_shortcode_tags = $shortcode_tags;
         remove_all_shortcodes();
 
-        $this->add_shortcode();
+        $this->add_shortcodes();
 
         // Do the shortcode (only the [embed] one is registered)
         $content = do_shortcode( $content, true );
@@ -266,45 +325,41 @@ class Footnotes
     }
 
     /**
-     * Process the `[ref]` shortcode.
+     * Renders the `[ref]` shortcode.
      *
      * @listens WP#callback:do_shortcode()
      *
-     * @global \WP_Comment $comment Global comment object.
-     * @global \WP_Post    $post    Global post object.
-     *
-     * @fires WP#filter:footnote_number
-     * @fires WP#filter:footnote_reference_html
+     * @fires filter:footnote_reference_index
+     * @fires filter:footnote_reference_mark
+     * @fires filter:footnote_reference_link_html
+     * @fires filter:footnote_reference_html
      *
      * @param  array       $atts Shortcode attributes.
      * @param  string|null $note The content within the shortcode tags.
      * @return ?string
      */
-    public function shortcode( $atts, $note = null )
+    public function render_ref_shortcode( $atts, $note = null )
     {
-        global $comment, $post;
+        if ( is_string( $note ) ) {
+            $note = trim( $note );
+        }
 
         if ( null === $note || '' === $note ) {
             return null;
         }
 
-        $is_comment = ( current_filter() === 'comment_text' );
-        if ( $is_comment ) {
-            if ( null === $comment ) {
-                return null;
-            }
+        list( $type, $id ) = $this->get_context();
 
-            $type   = 'comment';
-            $id     = $comment->comment_ID;
-            $anchor = 'comment-note-';
-        } else {
-            if ( null === $post ) {
-                return null;
-            }
+        if ( ! isset( $type, $id ) ) {
+            return null;
+        }
 
-            $type   = 'post';
-            $id     = $post->ID;
-            $anchor = 'note-';
+        $note_prefix = 'cite_note-';
+        $ref_prefix  = 'cite_ref-';
+
+        if ( $type && $id ) {
+            $note_prefix = "{$type}-{$id}-{$note_prefix}";
+            $ref_prefix  = "{$type}-{$id}-{$ref_prefix}";
         }
 
         // If the ID is not already in the array, create the array
@@ -315,50 +370,91 @@ class Footnotes
         // Store the footnote in the array
         $this->footnotes[$type][$id][] = $note;
 
+        $index = ( count( $this->footnotes[$type][$id] ) - 1 );
+
         /**
          * Calculates the footnote #
          *
-         * @event filter:footnote_number
+         * @event filter:footnote_reference_index
          *
-         * @param  int     $mark    The reference number or mark. Defaults to the next sequential number.
-         * @param  int     $id      The post or comment ID.
-         * @param  string  $note    The footnote.
-         * @param  string  $type    The current object type.
-         * @return int    |string A number or mark.
+         * @param  int    $index The reference number. Defaults to the next sequential number.
+         * @param  string $type  The current object type.
+         * @param  int    $id    The post or comment ID.
+         * @return int A number or mark.
          */
-        $mark = apply_filters(
-            'footnote_number',
-            count( $this->footnotes[$type][$id] ) - 1,
-            $id,
-            $note,
-            $type
-        );
+        $index = apply_filters( 'footnote_reference_index', $index, $type, $id );
+
+        $note_id = $note_prefix . $index;
+        $ref_id  = $ref_prefix  . $index;
 
         /**
          * Filters the HTML anchor tag of a footnote.
          *
-         * @event filter:footnote_reference_html
+         * @event filter:footnote_reference_mark
          *
-         * @param  string $html The HTML anchor tag of a footnote.
+         * @param  int    $mark The reference number. Defaults to the next sequential number.
+         * @param  string $type The current object type.
+         * @param  int    $id   The post or comment ID.
+         * @return int|string A number or mark.
+         */
+        $mark = apply_filters( 'footnote_reference_mark', $index, $type, $id );
+
+        $args = [
+            '{ref_id}'  => esc_attr( $ref_id ),
+            '{note_id}' => esc_attr( $note_id ),
+            '{index}'   => $index,
+            '{mark}'    => $mark,
+        ];
+
+        /**
+         * Filters the HTML anchor tag template of a footnote.
+         *
+         * @event filter:footnote_reference_link_html
+         *
+         * @param  string $link_html The HTML anchor tag of a footnote.
+         * @param  string $type      The current object type.
+         * @param  int    $id        The post or comment ID.
          * @return string The filtered HTML link to a footnote.
          */
-        $html = apply_filters(
-            'footnote_reference_html',
-            '<a class="simple-footnote" title="{title}" id="{id}" href="{href}"><sup>{mark}</sup></a>'
+        $_link_html = apply_filters(
+            'footnote_reference_link_html',
+            '<a href="#{note_id}">{mark}</a>',
+            $type,
+            $id
         );
 
-        $key = $anchor . $id . '-' . $mark;
+        $args['{link_html}'] = strtr( $_link_html, $args );
 
-        return strtr( $html, [
-            '{title}' => esc_attr( wp_strip_all_tags( $note ) ),
-            '{id}'    => esc_attr( 'return-' . $key ),
-            '{href}'  => esc_attr( '#' . $key ),
-            '{mark}'  => $mark,
-        ] );
+        $_ref_class = [ 'simple-footnote-reference' ];
+
+        if ( in_array( 'preview', $atts ) ) {
+            $_ref_class[] = 'simple-footnote-preview';
+        }
+
+        /**
+         * Filters the HTML marker tag of a footnote.
+         *
+         * @event filter:footnote_reference_html
+         *
+         * @param  string $ref_html The HTML marker tag of a footnote.
+         * @param  string $note     The text of the footnote.
+         * @param  string $type     The current object type.
+         * @param  int    $id       The post or comment ID.
+         * @return string The filtered HTML link to a footnote.
+         */
+        $_ref_html = apply_filters(
+            'footnote_reference_html',
+            '<sup id="{ref_id}" class="' . implode( ' ', $_ref_class ) . '">{link_html}</sup>',
+            $note,
+            $type,
+            $id
+        );
+
+        return strtr( $_ref_html, $args );
     }
 
     /**
-     * Append the footnotes to the comment text.
+     * Appends the footnotes to the comment text.
      *
      * @listens WP#filter:comment_text
      *
@@ -371,7 +467,7 @@ class Footnotes
     }
 
     /**
-     * Append the footnotes to the post content.
+     * Appends the footnotes to the post content.
      *
      * @listens WP#filter:the_content
      *
@@ -384,7 +480,7 @@ class Footnotes
     {
         global $multipage;
 
-        if ( 'content' === $this->placement || ! $multipage ) {
+        if ( 'the_content' === $this->placement || ! $multipage ) {
             return $this->append( $content );
         }
 
@@ -392,7 +488,7 @@ class Footnotes
     }
 
     /**
-     * Process the footnotes after the page links for paginated posts.
+     * Appends the footnotes after the page links for paginated posts.
      *
      * If {@see wp_link_pages()} appears both before and after the content,
      * `$this->footnotes[$id]` will be empty the first time through,
@@ -403,96 +499,13 @@ class Footnotes
      * @param  array $args Arguments for page links for paginated posts.
      * @return array The filtered arguments.
      */
-    public function wp_link_pages_args( $args )
+    public function append_to_link_pages_args( $args )
     {
-        $args['after'] = $this->append( $args['after'] );
+        if ( 'page_links' === $this->placement ) {
+            $args['after'] = $this->append( $args['after'] );
+        }
 
         return $args;
-    }
-
-    /**
-     * Remove all collected footnotes.
-     *
-     * @return void
-     */
-    public function clear()
-    {
-        $this->footnotes = [];
-    }
-
-    /**
-     * Append the footnotes.
-     *
-     * @global \WP_Comment $comment  Global comment object.
-     * @global int         $numpages Number of pages in the current post.
-     * @global string      $pagenow  Current Admin page
-     * @global \WP_Post    $post     Global post object.
-     *
-     * @param  string $content The content to process.
-     * @return string The content with footnotes.
-     */
-    public function append( $content )
-    {
-        global $comment, $numpages, $pagenow, $post;
-
-        $is_comment = ( current_filter() === 'comment_text' );
-        if ( $is_comment ) {
-            if ( null === $comment ) {
-                return $content;
-            }
-
-            $type   = 'comment';
-            $id     = $comment->comment_ID;
-            $anchor = 'comment-note-';
-        } else {
-            if ( null === $post ) {
-                return $content;
-            }
-
-            $type   = 'post';
-            $id     = $post->ID;
-            $anchor = 'note-';
-        }
-
-        // If there are no footnotes, bail early.
-        if ( empty( $this->footnotes[$type][$id] ) ) {
-            return $content;
-        }
-
-        // If post is paginated, make sure footnotes stay consistent.
-        if ( ! $is_comment && $numpages > 1 ) {
-            $start = $this->pagination[$id][$pagenow];
-        } else {
-            $start = 0;
-        }
-
-        $content .= '<aside class="simple-footnotes">';
-
-        if ( ! $is_comment ) {
-            load_plugin_textdomain( 'simple-footnotes' );
-            $content .= '<p class="notes">' . __( 'Notes:', 'simple-footnotes' ) . '</p>';
-        }
-
-        $content .= '<ol start="'. ( $start + 1 ) .'">';
-
-        // Iterate footnotes and format output
-        $html = '<li id="{id}">{note} <a href="{href}">{ref}</a></li>';
-        foreach ( array_filter( $this->footnotes[$type][$id] ) as $num => $note ) {
-            $mark = apply_filters( 'footnote_number', $num, $id, $note, $type );
-            $key  = $anchor . $id . '-' . $mark;
-            $note = strtr( $html, [
-                '{id}'   => esc_attr( $key ),
-                '{href}' => esc_attr( '#return-' . $key ),
-                '{ref}'  => '&#8617;',
-                '{note}' => do_shortcode( $note ),
-            ] );
-
-            $content .= $note;
-        }
-
-        $content .= '</ol></aside>';
-
-        return $content;
     }
 
     /**
@@ -506,16 +519,16 @@ class Footnotes
     {
         $pattern = '/(.?)\[(ref)\b(.*?)(?:(\/))?\](?:(.+?)\[\/\2\])?(.?)/s';
         preg_match_all( $pattern, $content, $matches );
-        return array_search( $footnote, $matches[5] );
+        return (int) array_search( $footnote, $matches[5] );
     }
 
     /**
-     * If post is paginated adjusts the footnote numbering to remain consistent across pages.
+     * If post is paginated adjust the footnote numbering to remain consistent across pages.
      *
      * @listens filter:footnote_number
      *
      * @global int      $numpages Number of pages in the current post.
-     * @global string   $pagenow  Current Admin page
+     * @global string   $pagenow  Current Admin page.
      * @global \WP_Post $post     Global post object.
      *
      * @param  int     $mark    The original footnote number.
@@ -546,6 +559,355 @@ class Footnotes
         }
 
         return $this->pagination[$id][$pagenow] + $number;
+    }
+
+    /**
+     * Removes all collected footnotes.
+     *
+     * @return void
+     */
+    public function clear()
+    {
+        $this->footnotes = [];
+    }
+
+    /**
+     * Appends the collected footnotes to the given content.
+     *
+     * @param  string $content The content to process.
+     * @return string The content with HTML footnotes.
+     */
+    public function append( $content )
+    {
+        $extra = $this->render();
+        if ( empty( $extra ) ) {
+            return $content;
+        }
+
+        return $content . "\n\n" . $extra;
+    }
+
+    /**
+     * Renders the collected footnotes as an HTML list.
+     *
+     * @fires filter:footnote_reference_index
+     * @fires filter:footnote_reference_item_html
+     * @fires filter:footnote_reference_backlinks_html
+     * @fires filter:footnote_reference_note_html
+     * @fires filter:footnote_reference_list_html
+     *
+     * @global int    $numpages Number of pages in the current post.
+     * @global string $pagenow  Current Admin page.
+     *
+     * @return ?string The HTML footnotes.
+     */
+    public function render_items()
+    {
+        global $numpages, $pagenow;
+
+        list( $type, $id ) = $this->get_context();
+
+        if ( ! isset( $type, $id ) ) {
+            return null;
+        }
+
+        if ( empty( $this->footnotes[$type][$id] ) ) {
+            return null;
+        }
+
+        $is_comment  = ( 'comment' === $type );
+        $note_prefix = 'cite_note-';
+        $ref_prefix  = 'cite_ref-';
+
+        if ( $type && $id ) {
+            $note_prefix = "{$type}-{$id}-{$note_prefix}";
+            $ref_prefix  = "{$type}-{$id}-{$ref_prefix}";
+        }
+
+        // If post is paginated, make sure footnotes stay consistent.
+        if ( ! $is_comment && $numpages > 1 ) {
+            $start = $this->pagination[$id][$pagenow];
+        } else {
+            $start = 0;
+        }
+
+        /**
+         * Filters the HTML list item template of a footnote.
+         *
+         * @event filter:footnote_reference_item_html
+         *
+         * @param  string $item_html The HTML list item of a footnote.
+         * @param  string $type      The current object type.
+         * @param  int    $id        The post or comment ID.
+         * @return string The filtered HTML link to a footnote.
+         */
+        $_item_html = apply_filters(
+            'footnote_reference_item_html',
+            '<li id="{note_id}">{back_html} {note_html}</li>',
+            $type,
+            $id
+        );
+
+        /**
+         * Filters the HTML backlinks template of a footnote.
+         *
+         * @event filter:footnote_reference_backlinks_html
+         *
+         * @param  string $back_html The HTML backlists list of a footnote.
+         * @param  string $type      The current object type.
+         * @param  int    $id        The post or comment ID.
+         * @return string The filtered HTML link to a footnote.
+         */
+        $_back_html = apply_filters(
+            'footnote_reference_backlinks_html',
+            '<span class="simple-footnote-backlink"><a href="#{ref_id}">{ref}</a></span>',
+            $type,
+            $id
+        );
+
+        /**
+         * Filters the HTML text template of a footnote.
+         *
+         * @event filter:footnote_reference_note_html
+         *
+         * @param  string $note_html The HTML text of a footnote.
+         * @param  string $type      The current object type.
+         * @param  int    $id        The post or comment ID.
+         * @return string The filtered HTML link to a footnote.
+         */
+        $_note_html = apply_filters(
+            'footnote_reference_note_html',
+            '<span class="simple-footnote-reference-text">{note}</span>',
+            $type,
+            $id
+        );
+
+        $items = [];
+        foreach ( array_filter( $this->footnotes[$type][$id] ) as $index => $note ) {
+            /** This filter is documented in {@see self::render_ref_shortcode()} */
+            $index = apply_filters( 'footnote_reference_index', $index, $note, $type, $id );
+
+            $note_id = $note_prefix . $index;
+            $ref_id  = $ref_prefix  . $index;
+
+            $args = [
+                '{ref_id}'  => esc_attr( $ref_id ),
+                '{note_id}' => esc_attr( $note_id ),
+                '{index}'   => $index,
+                '{ref}'     => '&#8617;',
+                '{note}'    => do_shortcode( $note ),
+            ];
+
+            $args['{back_html}'] = strtr( $_back_html, $args );
+            $args['{note_html}'] = strtr( $_note_html, $args );
+
+            $items[] = strtr( $_item_html, $args );
+        }
+
+        if ( empty( $items ) ) {
+            return null;
+        }
+
+        /**
+         * Filters the HTML list template of a footnote.
+         *
+         * @event filter:footnote_reference_list_html
+         *
+         * @param  string $list_html The HTML list of a footnote.
+         * @param  string $type      The current object type.
+         * @param  int    $id        The post or comment ID.
+         * @return string The filtered HTML link to a footnote.
+         */
+        $_list_html = apply_filters(
+            'footnote_reference_list_html',
+            '<ol start="{start}">{items_html}</ol>',
+            $type,
+            $id
+        );
+
+        return strtr( $_list_html, [
+            '{start}'      => ( $start + 1 ),
+            '{items_html}' => implode( '', $items ),
+        ] );
+    }
+
+    /**
+     * Renders the collected footnotes as an HTML section.
+     *
+     * @return ?string The HTML footnotes.
+     */
+    public function render()
+    {
+        list( $type, $id ) = $this->get_context();
+
+        if ( ! isset( $type, $id ) ) {
+            return null;
+        }
+
+        $list_html = $this->render_items();
+
+        if ( empty( $list_html ) ) {
+            return null;
+        }
+
+        $is_comment = ( 'comment' === $type );
+
+        $html = '<aside class="simple-footnotes-references">';
+
+        if ( ! $is_comment ) {
+            load_plugin_textdomain( 'simple-footnotes' );
+            $html .= '<p class="simple-footnotes-references-title">' . __( 'Notes:', 'simple-footnotes' ) . '</p>';
+        }
+
+        $html .= $list_html;
+        $html .= '</aside>';
+
+        return $html;
+    }
+
+    /**
+     * Retrieves the collected footnotes.
+     *
+     * @global int    $numpages Number of pages in the current post.
+     * @global string $pagenow  Current Admin page.
+     *
+     * @return array Array of collected footnotes.
+     */
+    public function all()
+    {
+        list( $type, $id ) = $this->get_context();
+
+        if ( ! isset( $type, $id ) ) {
+            return [];
+        }
+
+        if ( empty( $this->footnotes[$type][$id] ) ) {
+            return [];
+        }
+
+        return $this->footnotes[$type][$id];
+    }
+
+    /**
+     * Determines whether footnotes are empty.
+     *
+     * @return bool Returns FALSE if any footnotes have been collected.
+     */
+    public function is_empty()
+    {
+        list( $type, $id ) = $this->get_context();
+
+        if ( ! isset( $type, $id ) ) {
+            return false;
+        }
+
+        return empty( $this->footnotes[$type][$id] );
+    }
+
+    /**
+     * Counts the number of collected footnotes.
+     *
+     * @return int
+     */
+    public function count()
+    {
+        list( $type, $id ) = $this->get_context();
+
+        if ( ! isset( $type, $id, $this->footnotes[$type][$id] ) ) {
+            return 0;
+        }
+
+        return count( $this->footnotes[$type][$id] );
+    }
+
+    /**
+     * Get the blocks iterator.
+     *
+     * @return Traversable
+     */
+    public function getIterator()
+    {
+        return new ArrayIterator( $this->all() );
+    }
+
+    /**
+     * Retrieves the context type and object ID.
+     *
+     * @global \WP_Comment $comment Global comment object.
+     * @global \WP_Post    $post    Global post object.
+     *
+     * @return array
+     */
+    protected function get_context()
+    {
+        global $comment, $post;
+
+        $type = null;
+        $id   = null;
+
+        $is_comment = ( 'comment_text' === current_filter() );
+        if ( $is_comment ) {
+            if ( null !== $comment ) {
+                $type = 'comment';
+                $id   = $comment->comment_ID;
+            }
+        } else {
+            if ( null !== $post ) {
+                $type = 'post';
+                $id   = $post->ID;
+            }
+        }
+
+        return [ $type, $id ];
+    }
+
+    /**
+     * Upgrades the database settings.
+     *
+     * @return void
+     */
+    protected function upgrade()
+    {
+        // Check if DB needs to be upgraded
+        if (
+            empty( $this->options['db_version'] ) ||
+            $this->options['db_version'] < $this->db_version
+        ) {
+            // Initialize options array
+            if ( ! is_array( $this->options ) ) {
+                $this->options = [];
+            }
+
+            // Establish the DB version
+            $current_db_version = isset( $this->options['db_version'] ) ? $this->options['db_version'] : 0;
+
+            // Run upgrade and store new version #
+            if ( $current_db_version < 2 ) {
+                $this->options['placement'] = 'the_content';
+            }
+
+            $this->options['db_version'] = $this->db_version;
+            update_option( $this->option_name, $this->options );
+        }
+    }
+
+    /**
+     * Loads the current settings.
+     *
+     * @return void
+     */
+    protected function load_settings()
+    {
+        $options = get_option( $this->option_name );
+
+        if ( ! empty( $options['placement'] ) ) {
+            $options['placement'] = $this->parse_placement( $options['placement'] );
+        }
+
+        $options = wp_parse_args( $options, $this->get_default_settings() );
+
+        $this->placement = $options['placement'];
+        $this->options   = $options;
     }
 
     /**

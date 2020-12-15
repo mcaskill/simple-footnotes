@@ -70,7 +70,7 @@ $ composer require mcaskill/wp-simple-footnotes
 
 ### Activation
 
-Then activate the plugin via [wp-cli](http://wp-cli.org/commands/plugin/activate/).
+Then activate the plugin via [wp-cli](https://wp-cli.org/commands/plugin/activate/).
 
 ```
 $ wp plugin activate simple-footnotes
