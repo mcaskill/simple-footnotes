@@ -380,9 +380,10 @@ class Footnotes implements \Countable, \IteratorAggregate
          * @param  int    $index The reference number. Defaults to the next sequential number.
          * @param  string $type  The current object type.
          * @param  int    $id    The post or comment ID.
+         * @param  string $note  The footnote.
          * @return int A number or mark.
          */
-        $index = apply_filters( 'footnote_reference_index', $index, $type, $id );
+        $index = apply_filters( 'footnote_reference_index', $index, $type, $id, $note );
 
         $note_id = $note_prefix . $index;
         $ref_id  = $ref_prefix  . $index;
@@ -395,9 +396,10 @@ class Footnotes implements \Countable, \IteratorAggregate
          * @param  int    $mark The reference number. Defaults to the next sequential number.
          * @param  string $type The current object type.
          * @param  int    $id   The post or comment ID.
+         * @param  string $note The footnote.
          * @return int|string A number or mark.
          */
-        $mark = apply_filters( 'footnote_reference_mark', $index, $type, $id );
+        $mark = apply_filters( 'footnote_reference_mark', $index, $type, $id, $note );
 
         $args = [
             '{ref_id}'  => esc_attr( $ref_id ),
@@ -531,34 +533,34 @@ class Footnotes implements \Countable, \IteratorAggregate
      * @global string   $pagenow  Current Admin page.
      * @global \WP_Post $post     Global post object.
      *
-     * @param  int     $mark    The original footnote number.
-     * @param  int     $id      The post ID.
-     * @param  string  $note    The footnote.
-     * @param  string  $type    The current object type.
+     * @param  int         $index   The reference number.
+     * @param  string      $type    The current object type.
+     * @param  int         $id      The post or comment ID.
+     * @param  string|null $note    The footnote.
      * @return int The adjusted number.
      */
-    public function maybe_paginate_footnotes( $number, $id, $note, $type )
+    public function maybe_paginate_footnotes( $index, $type, $id, $note = null )
     {
         global $numpages, $pagenow, $post;
 
         // Don't worry about pagination for comments.
         if ( 'comment' === $type ) {
-            return $number;
+            return $index;
         }
 
         // If the post isn't paginated, just return the footnote number as is.
         if ( ! isset( $numpages ) || $numpages != 1 ) {
-            return $number;
+            return $index;
         }
 
         // If this is the first footnote being processed on this page,
         // figure out the starting # for this page's footnotes.
-        if ( !isset( $this->pagination[$id][$pagenow] ) ) {
+        if ( is_string( $note ) && ! isset( $this->pagination[$id][$pagenow] ) ) {
             $index = $this->get_footnote_absolute_index( $post->post_content, $note );
             $this->pagination[$id][$pagenow] = $index;
         }
 
-        return $this->pagination[$id][$pagenow] + $number;
+        return $this->pagination[$id][$pagenow] + $index;
     }
 
     /**
