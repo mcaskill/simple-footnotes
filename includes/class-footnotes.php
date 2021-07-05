@@ -7,10 +7,38 @@ namespace McAskill\WordPress\Footnotes;
  */
 class Footnotes implements \Countable, \IteratorAggregate
 {
+    public const SHORTCODE_TAG         = 'ref';
+    public const AJAX_GET_GLOBAL_NOTES = 'simple_footnotes_get_global_notes';
+
     /**
-     * Store the footnotes.
+     * @var object[] $global_notes_list A list of global notes.
+     */
+    protected static $global_notes_list;
+
+    /**
+     * @var array<string, object> $global_notes_map A map of global notes.
+     */
+    protected static $global_notes_map;
+
+    /**
+     * @var int $global_notes_count The number of available global notes.
+     */
+    protected static $global_notes_count = 0;
+
+    /**
+     * @var bool $has_any_global_notes Whether any global notes are available.
+     */
+    protected static $has_any_global_notes = false;
+
+    /**
+     * @var bool $has_many_global_notes Whether many global notes are available.
+     */
+    protected static $has_many_global_notes = false;
+
+    /**
+     * Store the footnotes and references to render.
      *
-     * @var array
+     * @var array<string, array<int, array<string, object>>>
      */
     protected $footnotes = [];
 
@@ -75,13 +103,13 @@ class Footnotes implements \Countable, \IteratorAggregate
 
         switch ( $this->placement ) {
             case 'page_links':
-                add_filter( 'footnote_reference_index', [ $this, 'maybe_paginate_footnotes' ], 10, 4 );
+                // add_filter( 'footnote_reference_index', [ $this, 'maybe_paginate_footnotes' ], 10, 4 );
                 add_filter( 'wp_link_pages_args', [ $this, 'append_to_link_pages_args' ], 12 );
                 $this->add_action_on_filter( 'wp_link_pages_args', [ $this, 'clear' ], 13 );
                 break;
 
             case 'the_content':
-                add_filter( 'footnote_reference_index', [ $this, 'maybe_paginate_footnotes' ], 10, 4 );
+                // add_filter( 'footnote_reference_index', [ $this, 'maybe_paginate_footnotes' ], 10, 4 );
                 add_filter( 'the_content', [ $this, 'append_to_post_content' ], 12 );
                 $this->add_action_on_filter( 'the_content', [ $this, 'clear' ], 13 );
                 break;
@@ -92,6 +120,9 @@ class Footnotes implements \Countable, \IteratorAggregate
             add_filter( 'comment_text', [ $this, 'do_shortcode' ], 31 );
             add_filter( 'comment_text', [ $this, 'append_to_comment_text' ], 32 );
         }
+
+        add_action( 'wp_ajax_' . static::AJAX_GET_GLOBAL_NOTES,        [ $this, 'wp_ajax_get_global_notes' ] );
+        add_action( 'wp_ajax_nopriv_' . static::AJAX_GET_GLOBAL_NOTES, [ $this, 'wp_ajax_get_global_notes' ] );
     }
 
     /**
@@ -105,11 +136,11 @@ class Footnotes implements \Countable, \IteratorAggregate
     {
         $this->upgrade();
 
-        load_plugin_textdomain( 'simple-footnotes' );
+        load_plugin_textdomain( 'simple_footnotes' );
 
         add_settings_field(
             'simple_footnotes_placement',
-            __( 'Footnotes placement', 'simple-footnotes' ),
+            __( 'Footnotes placement', 'simple_footnotes' ),
             [ $this, 'display_settings_field' ],
             'reading'
         );
@@ -119,11 +150,26 @@ class Footnotes implements \Countable, \IteratorAggregate
         ] );
 
         if ( current_user_can( 'edit_posts' ) && 'true' === get_user_option( 'rich_editing' ) ) {
-            add_filter( 'teeny_mce_buttons', [ $this, 'mce_buttons' ] );
-            add_filter( 'mce_buttons', [ $this, 'mce_buttons' ] );
-            add_filter( 'mce_external_plugins', [ $this, 'mce_external_plugins' ] );
+            add_filter( 'teeny_mce_buttons',      [ $this, 'mce_buttons' ] );
+            add_filter( 'mce_buttons',            [ $this, 'mce_buttons' ] );
+            add_filter( 'mce_external_plugins',   [ $this, 'mce_external_plugins' ] );
             add_filter( 'mce_external_languages', [ $this, 'mce_external_languages' ] );
         }
+    }
+
+    /**
+     * Handles AJAX requests for global notes.
+     *
+     * @listens WP#action:wp_ajax_{$action}
+     * @listens WP#action:wp_ajax_nopriv_{$action}
+     *
+     * @return void
+     */
+    public function wp_ajax_get_global_notes() : void
+    {
+        wp_send_json_success( [
+            'notes' => static::get_global_notes_list(),
+        ] );
     }
 
     /**
@@ -211,9 +257,9 @@ class Footnotes implements \Countable, \IteratorAggregate
     public function display_settings_field( array $args = [] )
     {
         $fields = [
-            'the_content' => __( 'Below content',    'simple-footnotes' ),
-            'page_links'  => __( 'Below page links', 'simple-footnotes' ),
-            'custom'      => __( 'Custom', 'simple-footnotes' ),
+            'the_content' => __( 'Below content',    'simple_footnotes' ),
+            'page_links'  => __( 'Below page links', 'simple_footnotes' ),
+            'custom'      => __( 'Custom', 'simple_footnotes' ),
         ];
 
         echo '<fieldset><p>';
@@ -289,7 +335,7 @@ class Footnotes implements \Countable, \IteratorAggregate
      */
     public function add_shortcodes()
     {
-        add_shortcode( 'ref', [ $this, 'render_ref_shortcode' ] );
+        add_shortcode( static::SHORTCODE_TAG, [ $this, 'render_ref_shortcode' ] );
     }
 
     /**
@@ -329,83 +375,135 @@ class Footnotes implements \Countable, \IteratorAggregate
      *
      * @listens WP#callback:do_shortcode()
      *
-     * @fires filter:footnote_reference_index
+     * @fires filter:footnote_note_index
+     * @fires filter:footnote_note_mark
      * @fires filter:footnote_reference_mark
+     * @fires filter:footnote_reference_text
      * @fires filter:footnote_reference_link_html
      * @fires filter:footnote_reference_html
      *
-     * @param  array       $atts Shortcode attributes.
-     * @param  string|null $note The content within the shortcode tags.
+     * @param  array       $shortcode_attrs Shortcode attributes.
+     * @param  string|null $shortcode_text  The content within the shortcode tags.
      * @return ?string
      */
-    public function render_ref_shortcode( $atts, $note = null )
+    public function render_ref_shortcode( $shortcode_attrs, $shortcode_text = null )
     {
-        if ( is_string( $note ) ) {
-            $note = trim( $note );
-        }
-
-        if ( null === $note || '' === $note ) {
-            return null;
+        if ( $shortcode_text === '' ) {
+            $shortcode_text = null;
         }
 
         list( $type, $id ) = $this->get_context();
 
         if ( ! isset( $type, $id ) ) {
-            return null;
+            return $shortcode_text;
         }
 
-        $note_prefix = 'cite_note-';
-        $ref_prefix  = 'cite_ref-';
+        $shortcode_attrs = wp_parse_args( $shortcode_attrs, [
+            'id'   => null,
+            'note' => null,
+            //'mark' => null,
+        ] );
 
-        if ( $type && $id ) {
-            $note_prefix = "{$type}-{$id}-{$note_prefix}";
-            $ref_prefix  = "{$type}-{$id}-{$ref_prefix}";
+        $note = null;
+
+        if ( isset( $shortcode_attrs['id'] ) ) {
+            $note = static::get_global_note( $shortcode_attrs['id'] );
+        } elseif ( isset( $shortcode_attrs['note'] ) ) {
+            $note = (object) [
+                'id'   => crc32( $shortcode_attrs['note'] ),
+                'text' => $shortcode_attrs['note'],
+            ];
         }
 
-        // If the ID is not already in the array, create the array
-        if ( ! isset( $this->footnotes[$type][$id] ) ) {
-            $this->footnotes[$type][$id] = [ 0 => false ];
+        if ( empty( $note ) ) {
+            return $shortcode_text;
         }
 
         // Store the footnote in the array
-        $this->footnotes[$type][$id][] = $note;
+        if ( isset( $this->footnotes[$type][$id][$note->id] ) ) {
+            $note = $this->footnotes[$type][$id][$note->id];
+        } else {
+            if ( ! isset( $this->footnotes[$type][$id] ) ) {
+                $this->footnotes[$type][$id] = [];
+            }
 
-        $index = ( count( $this->footnotes[$type][$id] ) - 1 );
+            $this->footnotes[$type][$id][$note->id] = $note;
 
-        /**
-         * Calculates the footnote #
-         *
-         * @event filter:footnote_reference_index
-         *
-         * @param  int    $index The reference number. Defaults to the next sequential number.
-         * @param  string $type  The current object type.
-         * @param  int    $id    The post or comment ID.
-         * @param  string $note  The footnote.
-         * @return int A number or mark.
-         */
-        $index = apply_filters( 'footnote_reference_index', $index, $type, $id, $note );
+            $note->refs = [];
 
-        $note_id = $note_prefix . $index;
-        $ref_id  = $ref_prefix  . $index;
+            $note->index = count( $this->footnotes[$type][$id] );
 
-        /**
-         * Filters the HTML anchor tag of a footnote.
-         *
-         * @event filter:footnote_reference_mark
-         *
-         * @param  int    $mark The reference number. Defaults to the next sequential number.
-         * @param  string $type The current object type.
-         * @param  int    $id   The post or comment ID.
-         * @param  string $note The footnote.
-         * @return int|string A number or mark.
-         */
-        $mark = apply_filters( 'footnote_reference_mark', $index, $type, $id, $note );
+            /**
+             * Filters the footnote #.
+             *
+             * @event filter:footnote_note_index
+             *
+             * @param  int         $index The reference number. Defaults to the next sequential number.
+             * @param  string      $type  The current object type.
+             * @param  int         $id    The post or comment ID.
+             * @param  object      $note  The footnote instance.
+             * @param  string|null $text  The related reference text.
+             * @return int A number or mark.
+             */
+            $note->index = apply_filters( 'footnote_note_index', $note->index, $type, $id, $note, $shortcode_text );
 
-        $args = [
-            '{ref_id}'  => esc_attr( $ref_id ),
-            '{note_id}' => esc_attr( $note_id ),
-            '{index}'   => $index,
-            '{mark}'    => $mark,
+            /**
+             * Filters the footnote marker based on the #.
+             *
+             * @event filter:footnote_note_mark
+             *
+             * @param  int|string  $mark The reference number or symbol. Defaults to the next sequential number.
+             * @param  string      $type The current object type.
+             * @param  int         $id   The post or comment ID.
+             * @param  object      $note The footnote instance.
+             * @param  string|null $text The related reference text.
+             * @return int|string A number or symbol.
+             */
+            $note->mark = apply_filters( 'footnote_note_mark', $note->index, $type, $id, $note, $shortcode_text );
+        }
+
+        if ( is_null( $shortcode_text ) ) {
+            /**
+             * Filters the footnote marker based on the #.
+             *
+             * @event filter:footnote_reference_mark
+             *
+             * @param  int|string  $mark The reference number or symbol. Defaults to the next sequential number.
+             * @param  string      $type The current object type.
+             * @param  int         $id   The post or comment ID.
+             * @param  object      $note The footnote instance.
+             * @param  string|null $text The related reference text.
+             * @return int|string A number or symbol.
+             */
+            $ref_mark = apply_filters( 'footnote_reference_mark', $note->mark, $type, $id, $note, $shortcode_text );
+        } else {
+            /**
+             * Filters the footnote reference text.
+             *
+             * @event filter:footnote_reference_text
+             *
+             * @param  int|string  $text The reference text. Defaults to the shortcode's enclosed content.
+             * @param  string      $type The current object type.
+             * @param  int         $id   The post or comment ID.
+             * @param  object      $note The footnote instance.
+             * @param  string|null $text The related reference text.
+             * @return int|string
+             */
+            $ref_mark = apply_filters( 'footnote_reference_text', $shortcode_text, $type, $id, $note, $shortcode_text );
+        }
+
+        $note->refs[] = $ref_mark;
+
+        $note_id = "{$type}-{$id}-cite_note-{$note->id}";
+        $ref_id  = "{$type}-{$id}-cite_ref-{$note->id}-" . count( $note->refs );
+
+        $_ref_args = [
+            '{html}'       => ( $shortcode_text ? 'span' : 'sup' ),
+            '{ref_id}'     => esc_attr( $ref_id ),
+            '{note_id}'    => esc_attr( $note_id ),
+            '{note_index}' => $note->index,
+            '{note_mark}'  => $note->mark,
+            '{ref_text}'   => $ref_mark,
         ];
 
         /**
@@ -413,23 +511,27 @@ class Footnotes implements \Countable, \IteratorAggregate
          *
          * @event filter:footnote_reference_link_html
          *
-         * @param  string $link_html The HTML anchor tag of a footnote.
-         * @param  string $type      The current object type.
-         * @param  int    $id        The post or comment ID.
+         * @param  string      $link_html The HTML anchor tag of a footnote.
+         * @param  string      $type      The current object type.
+         * @param  int         $id        The post or comment ID.
+         * @param  object      $note      The footnote instance.
+         * @param  string|null $text      The related reference text.
          * @return string The filtered HTML link to a footnote.
          */
         $_link_html = apply_filters(
             'footnote_reference_link_html',
-            '<a href="#{note_id}">{mark}</a>',
+            '<a href="#{note_id}">{ref_text}</a>',
             $type,
-            $id
+            $id,
+            $note,
+            $shortcode_text
         );
 
-        $args['{link_html}'] = strtr( $_link_html, $args );
+        $_ref_args['{link_html}'] = strtr( $_link_html, $_ref_args );
 
         $_ref_class = [ 'simple-footnote-reference' ];
 
-        if ( in_array( 'preview', $atts ) ) {
+        if ( in_array( 'preview', $shortcode_attrs ) ) {
             $_ref_class[] = 'simple-footnote-preview';
         }
 
@@ -438,21 +540,23 @@ class Footnotes implements \Countable, \IteratorAggregate
          *
          * @event filter:footnote_reference_html
          *
-         * @param  string $ref_html The HTML marker tag of a footnote.
-         * @param  string $note     The text of the footnote.
-         * @param  string $type     The current object type.
-         * @param  int    $id       The post or comment ID.
+         * @param  string      $ref_html The HTML marker tag of a footnote.
+         * @param  string      $type     The current object type.
+         * @param  int         $id       The post or comment ID.
+         * @param  object      $note     The footnote instance.
+         * @param  string|null $text     The related reference text.
          * @return string The filtered HTML link to a footnote.
          */
         $_ref_html = apply_filters(
             'footnote_reference_html',
-            '<sup id="{ref_id}" class="' . implode( ' ', $_ref_class ) . '">{link_html}</sup>',
-            $note,
+            '<{html} id="{ref_id}" class="' . implode( ' ', $_ref_class ) . '">{link_html}</{html}>',
             $type,
-            $id
+            $id,
+            $note,
+            $shortcode_text
         );
 
-        return strtr( $_ref_html, $args );
+        return strtr( $_ref_html, $_ref_args );
     }
 
     /**
@@ -513,33 +617,48 @@ class Footnotes implements \Countable, \IteratorAggregate
     /**
      * Resolve the absolute numbering for the given footnote.
      *
-     * @param  string $content  The haystack of `[ref]` tags.
-     * @param  string $footnote The searched footnote.
+     * @param  string $content The haystack of `[ref]` tags.
+     * @param  object $note    The footnote instance.
      * @return int The zero-based indexed for $footnote.
      */
-    public function get_footnote_absolute_index( $content, $footnote )
+    public function get_footnote_absolute_index( $content, $note )
     {
-        $pattern = '/(.?)\[(ref)\b(.*?)(?:(\/))?\](?:(.+?)\[\/\2\])?(.?)/s';
+        $pattern = '/\[ref .*?(?:(?:id|note)="(.*?)").*?\]/s';
         preg_match_all( $pattern, $content, $matches );
-        return (int) array_search( $footnote, $matches[5] );
+
+        if ( isset( $note->id ) ) {
+            $index = array_search( $note->id, $matches[1] );
+            if ( false !== $index ) {
+                return $index;
+            }
+        }
+
+        if ( isset( $note->text ) ) {
+            $index = array_search( $note->text, $matches[1] );
+            if ( false !== $index ) {
+                return $index;
+            }
+        }
+
+        return 0;
     }
 
     /**
      * If post is paginated adjust the footnote numbering to remain consistent across pages.
      *
-     * @listens filter:footnote_number
+     * @listens filter:footnote_reference_index
      *
      * @global int      $numpages Number of pages in the current post.
      * @global string   $pagenow  Current Admin page.
      * @global \WP_Post $post     Global post object.
      *
-     * @param  int         $index   The reference number.
-     * @param  string      $type    The current object type.
-     * @param  int         $id      The post or comment ID.
-     * @param  string|null $note    The footnote.
+     * @param  int    $index The reference number.
+     * @param  string $type  The current object type.
+     * @param  int    $id    The post or comment ID.
+     * @param  object $note  The footnote instance.
      * @return int The adjusted number.
      */
-    public function maybe_paginate_footnotes( $index, $type, $id, $note = null )
+    public function maybe_paginate_footnotes( $index, $type, $id, $note )
     {
         global $numpages, $pagenow, $post;
 
@@ -555,12 +674,16 @@ class Footnotes implements \Countable, \IteratorAggregate
 
         // If this is the first footnote being processed on this page,
         // figure out the starting # for this page's footnotes.
-        if ( is_string( $note ) && ! isset( $this->pagination[$id][$pagenow] ) ) {
+        if ( is_object( $note ) && ! isset( $this->pagination[$id][$pagenow] ) ) {
             $index = $this->get_footnote_absolute_index( $post->post_content, $note );
             $this->pagination[$id][$pagenow] = $index;
         }
 
-        return $this->pagination[$id][$pagenow] + $index;
+        if ( isset( $this->pagination[$id][$pagenow] ) ) {
+            return $this->pagination[$id][$pagenow] + $index;
+        }
+
+        return $index;
     }
 
     /**
@@ -592,7 +715,6 @@ class Footnotes implements \Countable, \IteratorAggregate
     /**
      * Renders the collected footnotes as an HTML list.
      *
-     * @fires filter:footnote_reference_index
      * @fires filter:footnote_reference_item_html
      * @fires filter:footnote_reference_backlinks_html
      * @fires filter:footnote_reference_note_html
@@ -618,13 +740,9 @@ class Footnotes implements \Countable, \IteratorAggregate
         }
 
         $is_comment  = ( 'comment' === $type );
-        $note_prefix = 'cite_note-';
-        $ref_prefix  = 'cite_ref-';
 
-        if ( $type && $id ) {
-            $note_prefix = "{$type}-{$id}-{$note_prefix}";
-            $ref_prefix  = "{$type}-{$id}-{$ref_prefix}";
-        }
+        $note_prefix = "{$type}-{$id}-cite_note-";
+        $ref_prefix  = "{$type}-{$id}-cite_ref-";
 
         // If post is paginated, make sure footnotes stay consistent.
         if ( ! $is_comment && $numpages > 1 ) {
@@ -645,7 +763,7 @@ class Footnotes implements \Countable, \IteratorAggregate
          */
         $_item_html = apply_filters(
             'footnote_reference_item_html',
-            '<li id="{note_id}">{back_html} {note_html}</li>',
+            '<li id="{note_id}" value="{note_mark}">{back_html} {note_html}</li>',
             $type,
             $id
         );
@@ -662,7 +780,7 @@ class Footnotes implements \Countable, \IteratorAggregate
          */
         $_back_html = apply_filters(
             'footnote_reference_backlinks_html',
-            '<span class="simple-footnote-backlink"><a href="#{ref_id}">{ref}</a></span>',
+            '<span class="simple-footnote-backlink"><a href="#{ref_id}">{back_mark}</a></span>',
             $type,
             $id
         );
@@ -679,29 +797,34 @@ class Footnotes implements \Countable, \IteratorAggregate
          */
         $_note_html = apply_filters(
             'footnote_reference_note_html',
-            '<span class="simple-footnote-reference-text">{note}</span>',
+            '<span class="simple-footnote-reference-text">{note_text}</span>',
             $type,
             $id
         );
 
         $items = [];
-        foreach ( array_filter( $this->footnotes[$type][$id] ) as $index => $note ) {
-            /** This filter is documented in {@see self::render_ref_shortcode()} */
-            $index = apply_filters( 'footnote_reference_index', $index, $note, $type, $id );
-
-            $note_id = $note_prefix . $index;
-            $ref_id  = $ref_prefix  . $index;
+        foreach ( array_filter( $this->footnotes[$type][$id] ) as $note ) {
+            $note_id = $note_prefix . $note->id;
+            $_ref_id = $ref_prefix  . $note->id . '-';
 
             $args = [
-                '{ref_id}'  => esc_attr( $ref_id ),
-                '{note_id}' => esc_attr( $note_id ),
-                '{index}'   => $index,
-                '{ref}'     => '&#8617;',
-                '{note}'    => do_shortcode( $note ),
+                '{note_id}'    => esc_attr( $note_id ),
+                '{note_index}' => $note->index,
+                '{note_mark}'  => $note->mark,
+                '{back_mark}'  => '&#8617;',
+                '{note_text}'  => do_shortcode( $note->text ),
             ];
 
-            $args['{back_html}'] = strtr( $_back_html, $args );
             $args['{note_html}'] = strtr( $_note_html, $args );
+            $args['{back_html}'] = [];
+
+            foreach ( $note->refs as $i => $_ref ) {
+                $args['{back_html}'][] = strtr( $_back_html, $args + [
+                    '{ref_id}' => esc_attr( $_ref_id . ( $i + 1 ) ),
+                ] );
+            }
+
+            $args['{back_html}'] = implode( ' ', $args['{back_html}'] );
 
             $items[] = strtr( $_item_html, $args );
         }
@@ -757,8 +880,8 @@ class Footnotes implements \Countable, \IteratorAggregate
         $html = '<aside class="simple-footnotes-references">';
 
         if ( ! $is_comment ) {
-            load_plugin_textdomain( 'simple-footnotes' );
-            $html .= '<p class="simple-footnotes-references-title">' . __( 'Notes:', 'simple-footnotes' ) . '</p>';
+            load_plugin_textdomain( 'simple_footnotes' );
+            $html .= '<p class="simple-footnotes-references-title">' . __( 'Notes:', 'simple_footnotes' ) . '</p>';
         }
 
         $html .= $list_html;
@@ -833,6 +956,87 @@ class Footnotes implements \Countable, \IteratorAggregate
     }
 
     /**
+     * Retrieves the list of global notes.
+     *
+     * @return object[]
+     */
+    public static function get_global_notes_list() : array
+    {
+        if ( is_null( static::$global_notes_list ) ) {
+            static::load_global_notes();
+        }
+
+        return static::$global_notes_list;
+    }
+
+    /**
+     * Retrieves the map of global notes.
+     *
+     * @return array<string, object>
+     */
+    public static function get_global_notes_map() : array
+    {
+        if ( is_null( static::$global_notes_map ) ) {
+            static::load_global_notes();
+        }
+
+        return static::$global_notes_map;
+    }
+
+    /**
+     * Retrieves a global note by ID.
+     *
+     * @param  string $id The note ID.
+     * @return ?object
+     */
+    public static function get_global_note( string $id ) : ?object
+    {
+        $notes = static::get_global_notes_map();
+
+        if ( ! isset( $notes[$id] ) ) {
+            return null;
+        }
+
+        return $notes[$id];
+    }
+
+    /**
+     * Counts the number of available global notes.
+     *
+     * @return int
+     */
+    public static function count_global_notes() : int
+    {
+        static::get_global_notes_list();
+
+        return static::$global_notes_count;
+    }
+
+    /**
+     * Determines if there are any available global notes.
+     *
+     * @return bool
+     */
+    public static function has_any_global_notes() : bool
+    {
+        static::get_global_notes_list();
+
+        return static::$has_any_global_notes;
+    }
+
+    /**
+     * Determines if there are more than one available global notes.
+     *
+     * @return bool
+     */
+    public static function has_many_global_notes() : bool
+    {
+        static::get_global_notes_list();
+
+        return static::$has_many_global_notes;
+    }
+
+    /**
      * Retrieves the context type and object ID.
      *
      * @global \WP_Comment $comment Global comment object.
@@ -860,7 +1064,10 @@ class Footnotes implements \Countable, \IteratorAggregate
             }
         }
 
-        return [ $type, $id ];
+        return [
+            $type,
+            $id,
+        ];
     }
 
     /**
@@ -932,5 +1139,43 @@ class Footnotes implements \Countable, \IteratorAggregate
         };
 
         return add_filter( $tag, $proxy_function, $priority, $accepted_args );
+    }
+
+    /**
+     * Loads the global notes.
+     *
+     * @fires filter:footnote_global_notes
+     *
+     * @return void
+     */
+    protected static function load_global_notes() : void
+    {
+        static::$global_notes_list = [];
+        static::$global_notes_map  = [];
+
+        /**
+         * Aggregates and filters the global notes.
+         *
+         * @event filter:footnote_global_notes
+         *
+         * @param  object[] $notes Zero or more global notes.
+         * @return object[]
+         */
+        $notes = (array) apply_filters( 'footnote_global_notes', [] );
+
+        foreach ( $notes as $note ) {
+            if ( is_array( $note ) ) {
+                $note = (object) $note;
+            }
+
+            if ( isset( $note->id, $note->text ) ) {
+                static::$global_notes_list[]         = $note;
+                static::$global_notes_map[$note->id] = $note;
+            }
+        }
+
+        static::$global_notes_count    = count( static::$global_notes_list );
+        static::$has_any_global_notes  = ( static::$global_notes_count > 0 );
+        static::$has_many_global_notes = ( static::$global_notes_count > 1 );
     }
 }

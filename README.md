@@ -5,7 +5,7 @@
 - License: MIT
 - Requires at least: 2.5
 - Tested up to: 5.6
-- Stable tag: 1.0.0
+- Stable tag: 3.0.0
 
 A simple way to add footnotes using WordPress shortcodes.
 
